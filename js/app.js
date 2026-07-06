@@ -1,6 +1,7 @@
 import { createLocalStore } from './local-store.js';
 import { createPoseTracker } from './pose.js';
 import { createCalibratedCounter, extractFrontFeatures } from './calibrated-counter.js';
+import { runAutoCalibration } from './calibration-flow.js';
 import { LM } from './pose-gate.js';
 import { createVoice } from './voice.js';
 import { computeStats } from './stats.js';
@@ -17,6 +18,8 @@ let wakeLock = null;
 let chart = null;
 let noBodyAnnounced = false;
 let goalAnnounced = false;
+let autoCalibrating = false;
+let calibrationSession = 0;
 
 function showScreen(name) {
   document.querySelectorAll('.tab').forEach(tab => {
@@ -79,31 +82,50 @@ function renderCalibration() {
   const hasDown = !!state.calibration?.down;
   $('calibration-status').textContent = hasUp && hasDown
     ? 'Calibrare salvata. Poti incepe.'
-    : hasUp
-      ? 'Sus salvat. Salveaza si pozitia Jos.'
-      : hasDown
-        ? 'Jos salvat. Salveaza si pozitia Sus.'
-        : 'Calibrare necesara: salveaza Sus si Jos.';
+    : 'Calibrare necesara: apasa Calibreaza automat.';
+  if ($('btn-auto-calibrate')) {
+    $('btn-auto-calibrate').disabled = autoCalibrating;
+    $('btn-auto-calibrate').textContent = autoCalibrating ? 'Calibrare...' : 'Calibreaza automat';
+  }
 }
 
-function saveCalibrationPoint(kind) {
-  if (!currentFeatures) {
-    $('detect-status').textContent = 'Nu vad clar bratele. Apropie-te sau aprinde lumina.';
+async function startAutoCalibration() {
+  if (autoCalibrating) return;
+  if (!tracker) {
+    $('detect-status').textContent = 'Porneste camera inainte de calibrare.';
     return;
   }
-  const calibration = {
-    ...(state.calibration || {}),
-    [kind]: currentFeatures,
-  };
-  state = store.setCalibration(calibration);
-  counter = createCalibratedCounter({ calibration: state.calibration });
+
+  autoCalibrating = true;
+  calibrationSession += 1;
+  const session = calibrationSession;
+  if (counter) counter.reset();
   renderCalibration();
-  $('detect-status').textContent = kind === 'up' ? 'Pozitia Sus salvata.' : 'Pozitia Jos salvata.';
-  voice.say(kind === 'up' ? 'Up saved' : 'Down saved');
+
+  const result = await runAutoCalibration({
+    getFeatures: () => currentFeatures,
+    saveCalibration(calibration) {
+      state = store.setCalibration(calibration);
+      counter = createCalibratedCounter({ calibration: state.calibration });
+    },
+    setStatus(message) {
+      $('detect-status').textContent = message;
+      $('calibration-status').textContent = message;
+    },
+    say: message => voice.say(message),
+    count: value => voice.count(value),
+    isActive: () => autoCalibrating && calibrationSession === session && !!tracker,
+  });
+
+  if (calibrationSession !== session) return;
+  autoCalibrating = false;
+  renderCalibration();
+  if (!result.ok && result.reason !== 'cancelled') {
+    if (counter) counter.reset();
+  }
 }
 
-$('btn-calibrate-up').addEventListener('click', () => saveCalibrationPoint('up'));
-$('btn-calibrate-down').addEventListener('click', () => saveCalibrationPoint('down'));
+$('btn-auto-calibrate').addEventListener('click', startAutoCalibration);
 
 function resizeCanvas(canvas, video) {
   const width = video.videoWidth || canvas.clientWidth || 720;
@@ -162,6 +184,7 @@ function drawPose(marks) {
 async function onLandmarks(marks) {
   drawPose(marks);
   currentFeatures = extractFrontFeatures(marks);
+  if (autoCalibrating) return;
   if (!marks) {
     currentFeatures = null;
     counter.reset();
@@ -180,7 +203,7 @@ async function onLandmarks(marks) {
   }
 
   if (!state.calibration?.up || !state.calibration?.down) {
-    $('detect-status').textContent = 'Calibreaza Sus si Jos inainte de numarare.';
+    $('detect-status').textContent = 'Apasa Calibreaza automat inainte de numarare.';
     return;
   }
 
@@ -237,6 +260,8 @@ async function startWorkout() {
 }
 
 async function stopWorkout() {
+  autoCalibrating = false;
+  calibrationSession += 1;
   if (tracker) {
     tracker.stop();
     tracker = null;
