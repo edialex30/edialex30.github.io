@@ -1,0 +1,267 @@
+import { createApiClient } from './api-client.js';
+import { createRepCounter } from './rep-counter.js';
+import { createPoseTracker, LM } from './pose.js';
+import { createVoice } from './voice.js';
+import { computeStats } from './stats.js';
+
+const api = createApiClient();
+const voice = createVoice();
+const $ = id => document.getElementById(id);
+
+let state = null;
+let tracker = null;
+let counter = null;
+let wakeLock = null;
+let chart = null;
+let noBodyAnnounced = false;
+let goalAnnounced = false;
+
+function showScreen(name) {
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.screen === name);
+  });
+  document.querySelectorAll('.screen').forEach(screen => {
+    screen.classList.toggle('active', screen.id === `screen-${name}`);
+  });
+  if (name === 'stats') renderStats();
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => showScreen(tab.dataset.screen));
+});
+
+function renderToday() {
+  if (!state) return;
+  $('today-remaining').textContent = state.today.remaining;
+  $('today-goal').textContent = state.today.goal;
+  $('today-done').textContent = state.today.reps;
+  $('goal-input').value = state.goal;
+  $('today-remaining').parentElement.classList.toggle('done', state.today.remaining === 0);
+}
+
+async function refresh() {
+  state = await api.getState();
+  goalAnnounced = state.today.remaining === 0;
+  renderToday();
+}
+
+$('goal-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const goal = parseInt($('goal-input').value, 10);
+  if (!Number.isInteger(goal) || goal < 1) return;
+  await api.setGoal(goal);
+  await refresh();
+});
+
+function currentArm(marks) {
+  const visibility = i => marks[i].visibility ?? 1;
+  const left = visibility(LM.LEFT_SHOULDER) + visibility(LM.LEFT_ELBOW) + visibility(LM.LEFT_WRIST);
+  const right = visibility(LM.RIGHT_SHOULDER) + visibility(LM.RIGHT_ELBOW) + visibility(LM.RIGHT_WRIST);
+
+  return left >= right
+    ? {
+        shoulder: marks[LM.LEFT_SHOULDER],
+        elbow: marks[LM.LEFT_ELBOW],
+        wrist: marks[LM.LEFT_WRIST],
+      }
+    : {
+        shoulder: marks[LM.RIGHT_SHOULDER],
+        elbow: marks[LM.RIGHT_ELBOW],
+        wrist: marks[LM.RIGHT_WRIST],
+      };
+}
+
+function resizeCanvas(canvas, video) {
+  const width = video.videoWidth || canvas.clientWidth || 720;
+  const height = video.videoHeight || canvas.clientHeight || 960;
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+
+function drawPose(marks) {
+  const canvas = $('overlay');
+  const video = $('video');
+  const ctx = canvas.getContext('2d');
+  resizeCanvas(canvas, video);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!marks) return;
+
+  const links = [
+    [LM.LEFT_SHOULDER, LM.LEFT_ELBOW],
+    [LM.LEFT_ELBOW, LM.LEFT_WRIST],
+    [LM.RIGHT_SHOULDER, LM.RIGHT_ELBOW],
+    [LM.RIGHT_ELBOW, LM.RIGHT_WRIST],
+  ];
+
+  ctx.lineWidth = Math.max(4, canvas.width * 0.008);
+  ctx.strokeStyle = '#35c46a';
+  ctx.fillStyle = '#f4b63f';
+  ctx.lineCap = 'round';
+
+  for (const [a, b] of links) {
+    const pa = marks[a];
+    const pb = marks[b];
+    if ((pa.visibility ?? 1) < 0.4 || (pb.visibility ?? 1) < 0.4) continue;
+    ctx.beginPath();
+    ctx.moveTo(pa.x * canvas.width, pa.y * canvas.height);
+    ctx.lineTo(pb.x * canvas.width, pb.y * canvas.height);
+    ctx.stroke();
+  }
+
+  for (const index of Object.values(LM)) {
+    const point = marks[index];
+    if ((point.visibility ?? 1) < 0.4) continue;
+    ctx.beginPath();
+    ctx.arc(point.x * canvas.width, point.y * canvas.height, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+async function onLandmarks(marks) {
+  drawPose(marks);
+  if (!marks) {
+    $('detect-status').textContent = 'Nu te vad - intra in cadru.';
+    if (!noBodyAnnounced) {
+      voice.say('Nu te vad');
+      noBodyAnnounced = true;
+    }
+    return;
+  }
+
+  noBodyAnnounced = false;
+  const result = counter.update(currentArm(marks));
+  $('detect-status').textContent = result.state === 'down'
+    ? 'Jos'
+    : result.state === 'up'
+      ? 'Sus'
+      : 'Te vad';
+
+  if (!result.counted) return;
+
+  $('rep-count').textContent = result.total;
+  const updated = await api.sendReps(1);
+  if (updated) {
+    state = updated;
+    renderToday();
+    voice.count(state.today.reps);
+    if (state.today.remaining === 0 && !goalAnnounced) {
+      goalAnnounced = true;
+      voice.say('Gata. Tinta atinsa.');
+    }
+  } else {
+    voice.count(result.total);
+  }
+}
+
+async function startWorkout() {
+  showScreen('workout');
+  $('detect-status').textContent = 'Pornesc camera...';
+  const video = $('video');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: 720, height: 960 },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+
+    counter = createRepCounter();
+    $('rep-count').textContent = '0';
+    noBodyAnnounced = false;
+    if (navigator.wakeLock) {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+      } catch {}
+    }
+
+    $('detect-status').textContent = 'Incarc detectia...';
+    tracker = await createPoseTracker({ video, onLandmarks });
+    tracker.start();
+    $('detect-status').textContent = 'Te caut in cadru.';
+  } catch (err) {
+    console.error(err);
+    $('detect-status').textContent = 'Camera nu a pornit. Verifica permisiunea si HTTPS.';
+  }
+}
+
+async function stopWorkout() {
+  if (tracker) {
+    tracker.stop();
+    tracker = null;
+  }
+
+  const video = $('video');
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(track => track.stop());
+    video.srcObject = null;
+  }
+
+  drawPose(null);
+  if (wakeLock) {
+    try {
+      await wakeLock.release();
+    } catch {}
+    wakeLock = null;
+  }
+
+  await refresh();
+  showScreen('today');
+}
+
+$('btn-start').addEventListener('click', startWorkout);
+$('btn-stop').addEventListener('click', stopWorkout);
+
+function renderStats() {
+  if (!state) return;
+  const stats = computeStats(state.days, state.today.date);
+  $('stat-total').textContent = stats.total;
+  $('stat-average').textContent = stats.average;
+  $('stat-best').textContent = stats.bestDay;
+  $('stat-streak').textContent = stats.currentStreak;
+  $('stat-best-streak').textContent = stats.bestStreak;
+
+  const lastDays = [...state.days]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-14);
+
+  if (chart) chart.destroy();
+  chart = new window.Chart($('chart'), {
+    type: 'bar',
+    data: {
+      labels: lastDays.map(day => day.date.slice(5)),
+      datasets: [{
+        label: 'Flotari',
+        data: lastDays.map(day => day.reps),
+        backgroundColor: '#35c46a',
+        borderColor: '#86efac',
+        borderWidth: 1,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+      },
+      scales: {
+        x: {
+          grid: { color: '#252a33' },
+          ticks: { color: '#a6adba' },
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: '#252a33' },
+          ticks: { color: '#a6adba', precision: 0 },
+        },
+      },
+    },
+  });
+}
+
+refresh().catch(err => {
+  console.error(err);
+  $('detect-status').textContent = 'Serverul nu raspunde.';
+});
