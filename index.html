@@ -57,7 +57,7 @@
       </label>
 
       <div class="calibration-panel">
-        <p id="calibration-status" class="calibration-status">Calibrare necesara.</p>
+        <p id="calibration-status" class="calibration-status" aria-live="polite">Calibrare necesara.</p>
         <div class="calibration-actions">
           <button id="btn-auto-calibrate" class="secondary" type="button">Calibreaza automat</button>
         </div>
@@ -68,7 +68,7 @@
         <canvas id="overlay"></canvas>
         <div id="rep-count" class="rep-count">0</div>
       </div>
-      <p id="detect-status" class="status">Porneste pentru a incepe.</p>
+      <p id="detect-status" class="status" aria-live="polite">Porneste pentru a incepe.</p>
     </section>
 
     <section id="screen-stats" class="screen" aria-labelledby="stats-title">
@@ -90,6 +90,11 @@
       <div class="chart-panel">
         <canvas id="chart"></canvas>
       </div>
+
+      <section class="hourly-panel" aria-labelledby="hourly-title">
+        <h2 id="hourly-title">Azi pe ore</h2>
+        <div id="hourly-list" class="hourly-list"></div>
+      </section>
     </section>
   </main>
 

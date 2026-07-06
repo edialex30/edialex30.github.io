@@ -9,12 +9,18 @@ export const LM = {
   RIGHT_WRIST: 16,
 };
 
-export async function createPoseTracker({ video, onLandmarks }) {
-  const fileset = await FilesetResolver.forVisionTasks('./vendor/wasm');
+export async function createPoseTracker({
+  video,
+  onLandmarks,
+  filesetResolver = FilesetResolver,
+  poseLandmarker = PoseLandmarker,
+  requestFrame = requestAnimationFrame,
+}) {
+  const fileset = await filesetResolver.forVisionTasks('./vendor/wasm');
   let landmarker;
 
   try {
-    landmarker = await PoseLandmarker.createFromOptions(fileset, {
+    landmarker = await poseLandmarker.createFromOptions(fileset, {
       baseOptions: {
         modelAssetPath: './vendor/pose_landmarker_lite.task',
         delegate: 'GPU',
@@ -23,7 +29,7 @@ export async function createPoseTracker({ video, onLandmarks }) {
       numPoses: 1,
     });
   } catch {
-    landmarker = await PoseLandmarker.createFromOptions(fileset, {
+    landmarker = await poseLandmarker.createFromOptions(fileset, {
       baseOptions: {
         modelAssetPath: './vendor/pose_landmarker_lite.task',
         delegate: 'CPU',
@@ -44,18 +50,22 @@ export async function createPoseTracker({ video, onLandmarks }) {
       const result = landmarker.detectForVideo(video, ts);
       onLandmarks(result.landmarks?.[0] || null);
     }
-    requestAnimationFrame(loop);
+    requestFrame(loop);
   }
 
   return {
     start() {
       if (!running) {
         running = true;
-        requestAnimationFrame(loop);
+        requestFrame(loop);
       }
     },
     stop() {
       running = false;
+    },
+    close() {
+      running = false;
+      landmarker.close?.();
     },
   };
 }

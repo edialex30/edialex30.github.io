@@ -2,9 +2,9 @@ import { createLocalStore } from './local-store.js';
 import { createPoseTracker } from './pose.js';
 import { createCalibratedCounter, extractFrontFeatures } from './calibrated-counter.js';
 import { runAutoCalibration } from './calibration-flow.js';
-import { LM } from './pose-gate.js';
+import { LM, evaluatePushupPose } from './pose-gate.js';
 import { createVoice } from './voice.js';
-import { computeStats } from './stats.js';
+import { computeStats, hourlyStatsForDay } from './stats.js';
 
 const store = createLocalStore();
 const voice = createVoice();
@@ -20,6 +20,10 @@ let noBodyAnnounced = false;
 let goalAnnounced = false;
 let autoCalibrating = false;
 let calibrationSession = 0;
+let workoutSession = 0;
+let isStartingWorkout = false;
+let isWorkoutActive = false;
+let activeSessionId = null;
 
 function showScreen(name) {
   document.querySelectorAll('.tab').forEach(tab => {
@@ -184,6 +188,12 @@ function drawPose(marks) {
 async function onLandmarks(marks) {
   drawPose(marks);
   currentFeatures = extractFrontFeatures(marks);
+  const poseReadiness = evaluatePushupPose(marks);
+  if (poseReadiness.reason === 'body-too-small') {
+    currentFeatures = null;
+    $('detect-status').textContent = 'Apropie telefonul sau intra mai mult in cadru.';
+    return;
+  }
   if (autoCalibrating) return;
   if (!marks) {
     currentFeatures = null;
@@ -216,8 +226,8 @@ async function onLandmarks(marks) {
 
   if (!result.counted) return;
 
-  $('rep-count').textContent = result.total;
-  state = store.addReps(1);
+  state = store.addReps(1, { sessionId: activeSessionId });
+  $('rep-count').textContent = state.today.reps;
   renderToday();
   voice.count(state.today.reps);
   if (state.today.remaining === 0 && !goalAnnounced) {
@@ -227,22 +237,39 @@ async function onLandmarks(marks) {
 }
 
 async function startWorkout() {
+  if (isStartingWorkout || isWorkoutActive) return;
+  isStartingWorkout = true;
+  const session = ++workoutSession;
   showScreen('workout');
   $('detect-status').textContent = 'Pornesc camera...';
   const video = $('video');
+  let stream = null;
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: state.cameraMode, width: 720, height: 960 },
       audio: false,
     });
+    if (session !== workoutSession) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+
     video.srcObject = stream;
     await video.play();
+    if (session !== workoutSession) {
+      stream.getTracks().forEach(track => track.stop());
+      video.srcObject = null;
+      return;
+    }
 
+    state = store.startSession();
+    activeSessionId = state.sessionId;
     counter = createCalibratedCounter({ calibration: state.calibration });
     currentFeatures = null;
-    $('rep-count').textContent = '0';
+    $('rep-count').textContent = state.today.reps;
     noBodyAnnounced = false;
+    renderToday();
     if (navigator.wakeLock) {
       try {
         wakeLock = await navigator.wakeLock.request('screen');
@@ -251,20 +278,40 @@ async function startWorkout() {
 
     $('detect-status').textContent = 'Incarc detectia...';
     tracker = await createPoseTracker({ video, onLandmarks });
+    if (session !== workoutSession) {
+      tracker.close?.();
+      tracker.stop?.();
+      tracker = null;
+      return;
+    }
     tracker.start();
+    isWorkoutActive = true;
     $('detect-status').textContent = 'Te caut in cadru.';
   } catch (err) {
     console.error(err);
+    if (stream) stream.getTracks().forEach(track => track.stop());
     $('detect-status').textContent = 'Camera nu a pornit. Verifica permisiunea si HTTPS.';
+  } finally {
+    if (session === workoutSession) {
+      isStartingWorkout = false;
+    }
   }
 }
 
 async function stopWorkout() {
+  workoutSession += 1;
+  isStartingWorkout = false;
+  isWorkoutActive = false;
   autoCalibrating = false;
   calibrationSession += 1;
   if (tracker) {
-    tracker.stop();
+    tracker.close?.();
+    tracker.stop?.();
     tracker = null;
+  }
+  if (activeSessionId) {
+    state = store.finishSession(activeSessionId);
+    activeSessionId = null;
   }
 
   const video = $('video');
@@ -300,6 +347,17 @@ function renderStats() {
   const lastDays = [...state.days]
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-14);
+  const todayEntry = state.days.find(day => day.date === state.today.date) || state.today;
+  const hourly = hourlyStatsForDay(todayEntry);
+
+  $('hourly-list').innerHTML = hourly.length
+    ? hourly.map(item => `
+      <div class="hour-row">
+        <span>${item.hour}</span>
+        <strong>${item.reps}</strong>
+      </div>
+    `).join('')
+    : '<p class="empty-state">Nu ai serii salvate azi.</p>';
 
   if (chart) chart.destroy();
   chart = new window.Chart($('chart'), {

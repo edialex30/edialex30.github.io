@@ -8,6 +8,30 @@ function prevDate(dateStr) {
   return `${yy}-${mm}-${dd}`;
 }
 
+export function hourlyStatsForDay(day) {
+  if (!day) return [];
+  const sessions = Array.isArray(day.sessions) ? day.sessions : [];
+  if (!sessions.length) {
+    return day.reps > 0 ? [{ hour: 'Total zi', reps: day.reps }] : [];
+  }
+
+  const byHour = new Map();
+  for (const session of sessions) {
+    const hour = typeof session.hour === 'string' ? session.hour : 'Fara ora';
+    const reps = Number.isInteger(session.reps) && session.reps >= 0 ? session.reps : 0;
+    byHour.set(hour, (byHour.get(hour) || 0) + reps);
+  }
+
+  const rows = [...byHour.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([hour, reps]) => ({ hour, reps }));
+  const sessionTotal = rows.reduce((sum, row) => sum + row.reps, 0);
+  if (Number.isInteger(day.reps) && day.reps > sessionTotal) {
+    rows.push({ hour: 'Corectie', reps: day.reps - sessionTotal });
+  }
+  return rows;
+}
+
 export function computeStats(days, today) {
   const total = days.reduce((s, d) => s + d.reps, 0);
   const bestDay = days.reduce((m, d) => Math.max(m, d.reps), 0);
