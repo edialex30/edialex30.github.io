@@ -1,6 +1,7 @@
 import { createLocalStore } from './local-store.js';
 import { createRepCounter } from './rep-counter.js';
-import { createPoseTracker, LM } from './pose.js';
+import { createPoseTracker } from './pose.js';
+import { evaluatePushupPose, LM } from './pose-gate.js';
 import { createVoice } from './voice.js';
 import { computeStats } from './stats.js';
 
@@ -15,6 +16,10 @@ let wakeLock = null;
 let chart = null;
 let noBodyAnnounced = false;
 let goalAnnounced = false;
+let readyFrames = 0;
+let counterArmed = false;
+
+const REQUIRED_READY_FRAMES = 8;
 
 function showScreen(name) {
   document.querySelectorAll('.tab').forEach(tab => {
@@ -70,24 +75,6 @@ $('camera-mode').addEventListener('change', event => {
   renderToday();
 });
 
-function currentArm(marks) {
-  const visibility = i => marks[i].visibility ?? 1;
-  const left = visibility(LM.LEFT_SHOULDER) + visibility(LM.LEFT_ELBOW) + visibility(LM.LEFT_WRIST);
-  const right = visibility(LM.RIGHT_SHOULDER) + visibility(LM.RIGHT_ELBOW) + visibility(LM.RIGHT_WRIST);
-
-  return left >= right
-    ? {
-        shoulder: marks[LM.LEFT_SHOULDER],
-        elbow: marks[LM.LEFT_ELBOW],
-        wrist: marks[LM.LEFT_WRIST],
-      }
-    : {
-        shoulder: marks[LM.RIGHT_SHOULDER],
-        elbow: marks[LM.RIGHT_ELBOW],
-        wrist: marks[LM.RIGHT_WRIST],
-      };
-}
-
 function resizeCanvas(canvas, video) {
   const width = video.videoWidth || canvas.clientWidth || 720;
   const height = video.videoHeight || canvas.clientHeight || 960;
@@ -108,8 +95,14 @@ function drawPose(marks) {
   const links = [
     [LM.LEFT_SHOULDER, LM.LEFT_ELBOW],
     [LM.LEFT_ELBOW, LM.LEFT_WRIST],
+    [LM.LEFT_SHOULDER, LM.LEFT_HIP],
+    [LM.LEFT_HIP, LM.LEFT_KNEE],
+    [LM.LEFT_KNEE, LM.LEFT_ANKLE],
     [LM.RIGHT_SHOULDER, LM.RIGHT_ELBOW],
     [LM.RIGHT_ELBOW, LM.RIGHT_WRIST],
+    [LM.RIGHT_SHOULDER, LM.RIGHT_HIP],
+    [LM.RIGHT_HIP, LM.RIGHT_KNEE],
+    [LM.RIGHT_KNEE, LM.RIGHT_ANKLE],
   ];
 
   ctx.lineWidth = Math.max(4, canvas.width * 0.008);
@@ -139,6 +132,9 @@ function drawPose(marks) {
 async function onLandmarks(marks) {
   drawPose(marks);
   if (!marks) {
+    readyFrames = 0;
+    counterArmed = false;
+    counter.reset();
     $('detect-status').textContent = 'Nu te vad - intra in cadru.';
     if (!noBodyAnnounced) {
       voice.say('Nu te vad');
@@ -148,7 +144,29 @@ async function onLandmarks(marks) {
   }
 
   noBodyAnnounced = false;
-  const result = counter.update(currentArm(marks));
+  const pose = evaluatePushupPose(marks);
+  if (!pose.ready) {
+    readyFrames = 0;
+    counterArmed = false;
+    counter.reset();
+    const message = pose.reason === 'not-pushup-position'
+      ? 'Aseaza-te in pozitie de flotare.'
+      : 'Arata corpul complet din profil.';
+    $('detect-status').textContent = message;
+    return;
+  }
+
+  readyFrames += 1;
+  if (!counterArmed) {
+    if (readyFrames < REQUIRED_READY_FRAMES) {
+      $('detect-status').textContent = 'Stai nemiscat in pozitie...';
+      return;
+    }
+    counter.reset();
+    counterArmed = true;
+  }
+
+  const result = counter.update(pose.arm);
   $('detect-status').textContent = result.state === 'down'
     ? 'Jos'
     : result.state === 'up'
@@ -183,6 +201,8 @@ async function startWorkout() {
     counter = createRepCounter();
     $('rep-count').textContent = '0';
     noBodyAnnounced = false;
+    readyFrames = 0;
+    counterArmed = false;
     if (navigator.wakeLock) {
       try {
         wakeLock = await navigator.wakeLock.request('screen');
