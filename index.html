@@ -31,6 +31,12 @@
         <input id="goal-input" type="number" inputmode="numeric" min="1" value="100" />
         <button id="btn-save-goal" type="submit">Salveaza</button>
       </form>
+
+      <form class="goal-editor" id="manual-reps-form">
+        <label for="manual-reps-input">Flotari azi</label>
+        <input id="manual-reps-input" type="number" inputmode="numeric" min="0" value="0" />
+        <button id="btn-save-reps" type="submit">Actualizeaza</button>
+      </form>
     </section>
 
     <section id="screen-workout" class="screen" aria-labelledby="workout-title">
@@ -41,6 +47,14 @@
         </div>
         <button id="btn-stop" class="secondary" type="button">Stop</button>
       </header>
+
+      <label class="camera-picker" for="camera-mode">
+        Camera
+        <select id="camera-mode">
+          <option value="environment">Spate</option>
+          <option value="user">Fata</option>
+        </select>
+      </label>
 
       <div class="video-wrap">
         <video id="video" playsinline muted></video>
