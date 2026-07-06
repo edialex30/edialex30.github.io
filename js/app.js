@@ -24,6 +24,22 @@ let workoutSession = 0;
 let isStartingWorkout = false;
 let isWorkoutActive = false;
 let activeSessionId = null;
+let clockTimer = null;
+
+function formatCurrentDateTime(date = new Date()) {
+  return new Intl.DateTimeFormat('ro-RO', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function renderClock() {
+  const target = $('today-datetime');
+  if (target) target.textContent = formatCurrentDateTime();
+}
 
 function showScreen(name) {
   document.querySelectorAll('.tab').forEach(tab => {
@@ -41,6 +57,7 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 function renderToday() {
   if (!state) return;
+  renderClock();
   $('today-remaining').textContent = state.today.remaining;
   $('today-goal').textContent = state.today.goal;
   $('today-done').textContent = state.today.reps;
@@ -394,3 +411,5 @@ function renderStats() {
 }
 
 refresh();
+renderClock();
+clockTimer = setInterval(renderClock, 60000);
