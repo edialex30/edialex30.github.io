@@ -1,10 +1,10 @@
-import { createApiClient } from './api-client.js';
+import { createLocalStore } from './local-store.js';
 import { createRepCounter } from './rep-counter.js';
 import { createPoseTracker, LM } from './pose.js';
 import { createVoice } from './voice.js';
 import { computeStats } from './stats.js';
 
-const api = createApiClient();
+const store = createLocalStore();
 const voice = createVoice();
 const $ = id => document.getElementById(id);
 
@@ -36,11 +36,13 @@ function renderToday() {
   $('today-goal').textContent = state.today.goal;
   $('today-done').textContent = state.today.reps;
   $('goal-input').value = state.goal;
+  $('manual-reps-input').value = state.today.reps;
+  $('camera-mode').value = state.cameraMode;
   $('today-remaining').parentElement.classList.toggle('done', state.today.remaining === 0);
 }
 
-async function refresh() {
-  state = await api.getState();
+function refresh() {
+  state = store.getState();
   goalAnnounced = state.today.remaining === 0;
   renderToday();
 }
@@ -49,8 +51,23 @@ $('goal-form').addEventListener('submit', async event => {
   event.preventDefault();
   const goal = parseInt($('goal-input').value, 10);
   if (!Number.isInteger(goal) || goal < 1) return;
-  await api.setGoal(goal);
-  await refresh();
+  state = store.setGoal(goal);
+  goalAnnounced = state.today.remaining === 0;
+  renderToday();
+});
+
+$('manual-reps-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const reps = parseInt($('manual-reps-input').value, 10);
+  if (!Number.isInteger(reps) || reps < 0) return;
+  state = store.setTodayReps(reps);
+  goalAnnounced = state.today.remaining === 0;
+  renderToday();
+});
+
+$('camera-mode').addEventListener('change', event => {
+  state = store.setCameraMode(event.target.value);
+  renderToday();
 });
 
 function currentArm(marks) {
@@ -141,17 +158,12 @@ async function onLandmarks(marks) {
   if (!result.counted) return;
 
   $('rep-count').textContent = result.total;
-  const updated = await api.sendReps(1);
-  if (updated) {
-    state = updated;
-    renderToday();
-    voice.count(state.today.reps);
-    if (state.today.remaining === 0 && !goalAnnounced) {
-      goalAnnounced = true;
-      voice.say('Gata. Tinta atinsa.');
-    }
-  } else {
-    voice.count(result.total);
+  state = store.addReps(1);
+  renderToday();
+  voice.count(state.today.reps);
+  if (state.today.remaining === 0 && !goalAnnounced) {
+    goalAnnounced = true;
+    voice.say('Gata. Tinta atinsa.');
   }
 }
 
@@ -162,7 +174,7 @@ async function startWorkout() {
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: 720, height: 960 },
+      video: { facingMode: state.cameraMode, width: 720, height: 960 },
       audio: false,
     });
     video.srcObject = stream;
@@ -207,7 +219,7 @@ async function stopWorkout() {
     wakeLock = null;
   }
 
-  await refresh();
+  refresh();
   showScreen('today');
 }
 
@@ -261,7 +273,4 @@ function renderStats() {
   });
 }
 
-refresh().catch(err => {
-  console.error(err);
-  $('detect-status').textContent = 'Serverul nu raspunde.';
-});
+refresh();
