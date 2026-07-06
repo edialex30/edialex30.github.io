@@ -2,8 +2,10 @@ const STORAGE_KEY = 'pushup-counter-state-v1';
 
 function defaultData() {
   return {
+    version: 2,
     goal: 100,
-    cameraMode: 'environment',
+    cameraMode: 'user',
+    calibration: null,
     days: [],
   };
 }
@@ -18,7 +20,13 @@ function localDateString(date = new Date()) {
 function normalize(data) {
   if (!data || typeof data !== 'object') return defaultData();
   const goal = Number.isInteger(data.goal) && data.goal >= 1 ? data.goal : 100;
-  const cameraMode = data.cameraMode === 'user' ? 'user' : 'environment';
+  const cameraMode = data.version >= 2 && data.cameraMode === 'environment' ? 'environment' : 'user';
+  const calibration = data.calibration
+    && typeof data.calibration === 'object'
+    && data.calibration.up
+    && data.calibration.down
+    ? data.calibration
+    : null;
   const days = Array.isArray(data.days)
     ? data.days
         .filter(day =>
@@ -30,7 +38,7 @@ function normalize(data) {
         )
         .map(day => ({ date: day.date, reps: day.reps, goal: day.goal }))
     : [];
-  return { goal, cameraMode, days };
+  return { version: 2, goal, cameraMode, calibration, days };
 }
 
 export function createLocalStore({
@@ -56,6 +64,7 @@ export function createLocalStore({
     return {
       goal: data.goal,
       cameraMode: data.cameraMode,
+      calibration: data.calibration,
       today: {
         ...entry,
         remaining: Math.max(0, entry.goal - entry.reps),
@@ -106,6 +115,13 @@ export function createLocalStore({
     setCameraMode(cameraMode) {
       const data = read();
       data.cameraMode = cameraMode === 'user' ? 'user' : 'environment';
+      write(data);
+      return stateFrom(data);
+    },
+
+    setCalibration(calibration) {
+      const data = read();
+      data.calibration = calibration;
       write(data);
       return stateFrom(data);
     },

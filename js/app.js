@@ -1,7 +1,7 @@
 import { createLocalStore } from './local-store.js';
-import { createRepCounter } from './rep-counter.js';
 import { createPoseTracker } from './pose.js';
-import { evaluatePushupPose, LM } from './pose-gate.js';
+import { createCalibratedCounter, extractFrontFeatures } from './calibrated-counter.js';
+import { LM } from './pose-gate.js';
 import { createVoice } from './voice.js';
 import { computeStats } from './stats.js';
 
@@ -12,14 +12,11 @@ const $ = id => document.getElementById(id);
 let state = null;
 let tracker = null;
 let counter = null;
+let currentFeatures = null;
 let wakeLock = null;
 let chart = null;
 let noBodyAnnounced = false;
 let goalAnnounced = false;
-let readyFrames = 0;
-let counterArmed = false;
-
-const REQUIRED_READY_FRAMES = 8;
 
 function showScreen(name) {
   document.querySelectorAll('.tab').forEach(tab => {
@@ -44,6 +41,7 @@ function renderToday() {
   $('manual-reps-input').value = state.today.reps;
   $('camera-mode').value = state.cameraMode;
   $('today-remaining').parentElement.classList.toggle('done', state.today.remaining === 0);
+  renderCalibration();
 }
 
 function refresh() {
@@ -74,6 +72,38 @@ $('camera-mode').addEventListener('change', event => {
   state = store.setCameraMode(event.target.value);
   renderToday();
 });
+
+function renderCalibration() {
+  if (!$('calibration-status') || !state) return;
+  const hasUp = !!state.calibration?.up;
+  const hasDown = !!state.calibration?.down;
+  $('calibration-status').textContent = hasUp && hasDown
+    ? 'Calibrare salvata. Poti incepe.'
+    : hasUp
+      ? 'Sus salvat. Salveaza si pozitia Jos.'
+      : hasDown
+        ? 'Jos salvat. Salveaza si pozitia Sus.'
+        : 'Calibrare necesara: salveaza Sus si Jos.';
+}
+
+function saveCalibrationPoint(kind) {
+  if (!currentFeatures) {
+    $('detect-status').textContent = 'Nu vad clar bratele. Apropie-te sau aprinde lumina.';
+    return;
+  }
+  const calibration = {
+    ...(state.calibration || {}),
+    [kind]: currentFeatures,
+  };
+  state = store.setCalibration(calibration);
+  counter = createCalibratedCounter({ calibration: state.calibration });
+  renderCalibration();
+  $('detect-status').textContent = kind === 'up' ? 'Pozitia Sus salvata.' : 'Pozitia Jos salvata.';
+  voice.say(kind === 'up' ? 'Up saved' : 'Down saved');
+}
+
+$('btn-calibrate-up').addEventListener('click', () => saveCalibrationPoint('up'));
+$('btn-calibrate-down').addEventListener('click', () => saveCalibrationPoint('down'));
 
 function resizeCanvas(canvas, video) {
   const width = video.videoWidth || canvas.clientWidth || 720;
@@ -131,9 +161,9 @@ function drawPose(marks) {
 
 async function onLandmarks(marks) {
   drawPose(marks);
+  currentFeatures = extractFrontFeatures(marks);
   if (!marks) {
-    readyFrames = 0;
-    counterArmed = false;
+    currentFeatures = null;
     counter.reset();
     $('detect-status').textContent = 'Nu te vad - intra in cadru.';
     if (!noBodyAnnounced) {
@@ -144,29 +174,17 @@ async function onLandmarks(marks) {
   }
 
   noBodyAnnounced = false;
-  const pose = evaluatePushupPose(marks);
-  if (!pose.ready) {
-    readyFrames = 0;
-    counterArmed = false;
-    counter.reset();
-    const message = pose.reason === 'not-pushup-position'
-      ? 'Aseaza-te in pozitie de flotare.'
-      : 'Arata corpul complet din profil.';
-    $('detect-status').textContent = message;
+  if (!currentFeatures) {
+    $('detect-status').textContent = 'Arata ambele brate catre camera.';
     return;
   }
 
-  readyFrames += 1;
-  if (!counterArmed) {
-    if (readyFrames < REQUIRED_READY_FRAMES) {
-      $('detect-status').textContent = 'Stai nemiscat in pozitie...';
-      return;
-    }
-    counter.reset();
-    counterArmed = true;
+  if (!state.calibration?.up || !state.calibration?.down) {
+    $('detect-status').textContent = 'Calibreaza Sus si Jos inainte de numarare.';
+    return;
   }
 
-  const result = counter.update(pose.arm);
+  const result = counter.update(currentFeatures);
   $('detect-status').textContent = result.state === 'down'
     ? 'Jos'
     : result.state === 'up'
@@ -198,11 +216,10 @@ async function startWorkout() {
     video.srcObject = stream;
     await video.play();
 
-    counter = createRepCounter();
+    counter = createCalibratedCounter({ calibration: state.calibration });
+    currentFeatures = null;
     $('rep-count').textContent = '0';
     noBodyAnnounced = false;
-    readyFrames = 0;
-    counterArmed = false;
     if (navigator.wakeLock) {
       try {
         wakeLock = await navigator.wakeLock.request('screen');

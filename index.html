@@ -51,10 +51,18 @@
       <label class="camera-picker" for="camera-mode">
         Camera
         <select id="camera-mode">
-          <option value="environment">Spate</option>
           <option value="user">Fata</option>
+          <option value="environment">Spate</option>
         </select>
       </label>
+
+      <div class="calibration-panel">
+        <p id="calibration-status" class="calibration-status">Calibrare necesara.</p>
+        <div class="calibration-actions">
+          <button id="btn-calibrate-up" class="secondary" type="button">Salveaza Sus</button>
+          <button id="btn-calibrate-down" class="secondary" type="button">Salveaza Jos</button>
+        </div>
+      </div>
 
       <div class="video-wrap">
         <video id="video" playsinline muted></video>
@@ -93,6 +101,6 @@
   </nav>
 
   <script src="./vendor/chart.umd.min.js"></script>
-  <script type="module" src="./js/app.js?v=pose-gate-1"></script>
+  <script type="module" src="./js/app.js?v=calibration-1"></script>
 </body>
 </html>
