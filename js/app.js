@@ -4,7 +4,7 @@ import { createCalibratedCounter, extractFrontFeatures } from './calibrated-coun
 import { runAutoCalibration } from './calibration-flow.js';
 import { LM, evaluatePushupPose } from './pose-gate.js';
 import { createVoice } from './voice.js';
-import { computeStats, hourlyStatsForDay } from './stats.js';
+import { computeStats, hourlyStatsByDay } from './stats.js';
 
 const store = createLocalStore();
 const voice = createVoice();
@@ -364,17 +364,24 @@ function renderStats() {
   const lastDays = [...state.days]
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-14);
-  const todayEntry = state.days.find(day => day.date === state.today.date) || state.today;
-  const hourly = hourlyStatsForDay(todayEntry);
+  const hourlyByDay = hourlyStatsByDay(state.days);
 
-  $('hourly-list').innerHTML = hourly.length
-    ? hourly.map(item => `
-      <div class="hour-row">
-        <span>${item.hour}</span>
-        <strong>${item.reps}</strong>
-      </div>
+  $('hourly-list').innerHTML = hourlyByDay.length
+    ? hourlyByDay.map(day => `
+      <section class="hourly-day">
+        <div class="hourly-day-title">
+          <span>${day.date}</span>
+          <strong>${day.reps}</strong>
+        </div>
+        ${day.hourly.map(item => `
+          <div class="hour-row">
+            <span>${item.hour}</span>
+            <strong>${item.reps}</strong>
+          </div>
+        `).join('')}
+      </section>
     `).join('')
-    : '<p class="empty-state">Nu ai serii salvate azi.</p>';
+    : '<p class="empty-state">Nu ai serii salvate inca.</p>';
 
   if (chart) chart.destroy();
   chart = new window.Chart($('chart'), {

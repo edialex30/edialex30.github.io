@@ -32,6 +32,17 @@ export function hourlyStatsForDay(day) {
   return rows;
 }
 
+export function hourlyStatsByDay(days) {
+  return [...days]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map(day => ({
+      date: day.date,
+      reps: Number.isInteger(day.reps) && day.reps >= 0 ? day.reps : 0,
+      hourly: hourlyStatsForDay(day),
+    }))
+    .filter(day => day.reps > 0 || day.hourly.length > 0);
+}
+
 export function computeStats(days, today) {
   const total = days.reduce((s, d) => s + d.reps, 0);
   const bestDay = days.reduce((m, d) => Math.max(m, d.reps), 0);

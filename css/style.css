@@ -320,7 +320,38 @@ h1 {
 
 .hourly-list {
   display: grid;
+  gap: 12px;
+}
+
+.hourly-day {
+  display: grid;
   gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hourly-day:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.hourly-day-title {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  min-height: 36px;
+  color: var(--fg);
+  font-weight: 850;
+}
+
+.hourly-day-title span {
+  color: var(--fg);
+}
+
+.hourly-day-title strong {
+  color: var(--accent);
+  font-size: 20px;
+  line-height: 1;
 }
 
 .hour-row {
